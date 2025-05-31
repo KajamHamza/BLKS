@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Rating badge styles */
+.rating-none { @apply bg-gray-100 text-gray-600; }
+.rating-bronze { @apply bg-amber-100 text-amber-700; }
+.rating-silver { @apply bg-gray-200 text-gray-700; }
+.rating-gold { @apply bg-yellow-100 text-yellow-700; }
+.rating-platinum { @apply bg-slate-200 text-slate-700; }
+.rating-diamond { @apply bg-cyan-100 text-cyan-700; }
+.rating-ace { @apply bg-purple-100 text-purple-700; }
+.rating-conqueror { @apply bg-red-100 text-red-700; }
+
+/* Custom animations */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: shimmer 1.5s infinite;
+}
+
+/* Kill zone styles */
+.kill-zone {
+  @apply opacity-50 grayscale;
+} 

@@ -1,0 +1,23 @@
+
+[package]
+name = "blocks-contracts"
+version = "0.1.0"
+edition = "2021"
+description = "Solana smart contracts for the Blocks social platform"
+authors = ["Blocks Team"]
+
+[dependencies]
+solana-program = "1.17.1"
+borsh = "0.10.3"
+borsh-derive = "0.10.3"
+thiserror = "1.0.48"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dev-dependencies]
+solana-program-test = "1.17.1"
+solana-sdk = "1.17.1"
+
+[features]
+test-sbf = []

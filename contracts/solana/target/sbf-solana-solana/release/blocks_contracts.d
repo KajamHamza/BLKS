@@ -1,0 +1,1 @@
+/home/hamza/blocks/contracts/solana/target/sbf-solana-solana/release/blocks_contracts.so: /home/hamza/blocks/contracts/solana/src/error.rs /home/hamza/blocks/contracts/solana/src/instruction.rs /home/hamza/blocks/contracts/solana/src/lib.rs /home/hamza/blocks/contracts/solana/src/processor.rs /home/hamza/blocks/contracts/solana/src/state.rs
