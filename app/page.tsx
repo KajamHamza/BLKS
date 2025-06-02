@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
+import { useSearchParams } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import Feed from '@/components/Feed'
 import Sidebar from '@/components/Sidebar'
@@ -19,6 +20,7 @@ import { useBlocksProgram, Profile } from '@/hooks/useBlocksProgram'
 export default function Home() {
   const { connected, publicKey } = useWallet()
   const { getProfile, checkProfileAtPDA } = useBlocksProgram()
+  const searchParams = useSearchParams()
   const [showCreatePost, setShowCreatePost] = useState(false)
   const [showCreateProfile, setShowCreateProfile] = useState(false)
   const [userProfile, setUserProfile] = useState<Profile | null>(null)
@@ -28,6 +30,14 @@ export default function Home() {
   // Page navigation state
   const [currentPage, setCurrentPage] = useState<'feed' | 'profile' | 'settings' | 'subblocks' | 'bookmarks'>('feed')
   const [viewingProfileAddress, setViewingProfileAddress] = useState<string | null>(null)
+
+  // Handle URL parameters for navigation
+  useEffect(() => {
+    const pageParam = searchParams.get('page')
+    if (pageParam && ['feed', 'profile', 'settings', 'subblocks', 'bookmarks'].includes(pageParam)) {
+      setCurrentPage(pageParam as 'feed' | 'profile' | 'settings' | 'subblocks' | 'bookmarks')
+    }
+  }, [searchParams])
 
   useEffect(() => {
     if (connected && publicKey) {

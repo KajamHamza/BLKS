@@ -47,7 +47,7 @@ const uploadToIPFS = async (file: File): Promise<string> => {
 
 export default function SubBlocksPage() {
   const { publicKey } = useWallet()
-  const { createCommunity, getProfile } = useBlocksProgram()
+  const { createCommunity, getProfile, getCommunities } = useBlocksProgram()
   const { connection } = useConnection()
   const [subblocks, setSubblocks] = useState<Community[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,6 +56,7 @@ export default function SubBlocksPage() {
   const [activeTab, setActiveTab] = useState('browse')
   const [userProfile, setUserProfile] = useState<any>(null)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [userCreatedSubblocksCount, setUserCreatedSubblocksCount] = useState(0)
 
   // Create subblock form state
   const [formData, setFormData] = useState({
@@ -64,6 +65,226 @@ export default function SubBlocksPage() {
     avatar: '',
     rules: [''],
   })
+
+  // Test function to check specific community account
+  const testCommunityAccount = async (accountAddress: string) => {
+    try {
+      console.log(`🔍 Testing community account: ${accountAddress}`)
+      const publicKey = new PublicKey(accountAddress)
+      const accountInfo = await connection.getAccountInfo(publicKey)
+      
+      if (!accountInfo) {
+        console.log(`❌ No account found at address: ${accountAddress}`)
+        return
+      }
+      
+      console.log(`✅ Account exists! Owner: ${accountInfo.owner.toString()}, Size: ${accountInfo.data.length} bytes`)
+      console.log(`🔍 Raw data (first 100 bytes):`, Array.from(accountInfo.data.slice(0, 100)))
+      
+      // Check if it's owned by our program
+      const PROGRAM_ID = new PublicKey(config.solana.programId)
+      if (accountInfo.owner.equals(PROGRAM_ID)) {
+        console.log(`✅ Account is owned by our program`)
+        
+        // Detailed byte analysis
+        console.log(`🔍 Detailed byte analysis:`)
+        const data = accountInfo.data
+        
+        console.log(`   Bytes 0-10:`, Array.from(data.slice(0, 11)))
+        console.log(`   Bytes 10-20:`, Array.from(data.slice(10, 21)))
+        console.log(`   Bytes 20-30:`, Array.from(data.slice(20, 31)))
+        console.log(`   Bytes 30-50:`, Array.from(data.slice(30, 51)))
+        console.log(`   Bytes 50-70:`, Array.from(data.slice(50, 71)))
+        
+        // Try to find the string "TPA-SE-UIR" in the data
+        const searchString = "TPA-SE-UIR"
+        const searchBytes = Buffer.from(searchString, 'utf8')
+        console.log(`🔍 Searching for "${searchString}" (bytes: [${Array.from(searchBytes).join(', ')}])`)
+        
+        for (let i = 0; i < data.length - searchBytes.length; i++) {
+          let found = true
+          for (let j = 0; j < searchBytes.length; j++) {
+            if (data[i + j] !== searchBytes[j]) {
+              found = false
+              break
+            }
+          }
+          if (found) {
+            console.log(`   ✅ Found "${searchString}" at byte position ${i}`)
+            console.log(`   Bytes before string (${i-10} to ${i-1}):`, Array.from(data.slice(Math.max(0, i-10), i)))
+            console.log(`   String bytes (${i} to ${i+searchBytes.length-1}):`, Array.from(data.slice(i, i+searchBytes.length)))
+            console.log(`   Bytes after string (${i+searchBytes.length} to ${i+searchBytes.length+10}):`, Array.from(data.slice(i+searchBytes.length, i+searchBytes.length+11)))
+            break
+          }
+        }
+        
+        // Now try to manually parse the community data
+        console.log(`🔍 Attempting to parse community data...`)
+        let offset = 0
+        
+        try {
+          // Parse is_initialized
+          const is_initialized = data[offset]
+          console.log(`   is_initialized: ${is_initialized}`)
+          offset += 1
+          
+          // Parse id (u64)
+          const id = data.readBigUInt64LE(offset)
+          console.log(`   id: ${id}`)
+          offset += 8
+          
+          // Parse creator (32 bytes)
+          const creator = data.slice(offset, offset + 32)
+          console.log(`   creator: ${new PublicKey(creator).toString()}`)
+          offset += 32
+          
+          console.log(`   Current offset: ${offset}`)
+          console.log(`   Next 20 bytes:`, Array.from(data.slice(offset, offset + 20)))
+          
+          // Parse name length
+          const nameLength = data.readUInt32LE(offset)
+          console.log(`   name length: ${nameLength}`)
+          offset += 4
+          
+          if (nameLength > 0 && nameLength < 100 && offset + nameLength <= data.length) {
+            const name = data.slice(offset, offset + nameLength).toString('utf8')
+            console.log(`   name: "${name}"`)
+            offset += nameLength
+            
+            // Parse description length
+            const descriptionLength = data.readUInt32LE(offset)
+            console.log(`   description length: ${descriptionLength}`)
+            offset += 4
+            
+            if (descriptionLength > 0 && descriptionLength < 1000 && offset + descriptionLength <= data.length) {
+              const description = data.slice(offset, offset + descriptionLength).toString('utf8')
+              console.log(`   description: "${description}"`)
+              console.log(`✅ Successfully parsed community data!`)
+            } else {
+              console.log(`❌ Invalid description length or not enough data`)
+            }
+          } else {
+            console.log(`❌ Invalid name length or not enough data`)
+          }
+        } catch (parseError) {
+          console.log(`❌ Error parsing community data:`, parseError)
+        }
+      } else {
+        console.log(`❌ Account is owned by different program: ${accountInfo.owner.toString()}`)
+        console.log(`   Expected: ${PROGRAM_ID.toString()}`)
+      }
+    } catch (error) {
+      console.log(`❌ Error checking community account:`, error)
+    }
+  }
+
+  // Test function with corrected parsing order
+  const testCommunityAccountCorrected = async (accountAddress: string) => {
+    try {
+      console.log(`🔍 Testing community account with corrected parsing: ${accountAddress}`)
+      const publicKey = new PublicKey(accountAddress)
+      const accountInfo = await connection.getAccountInfo(publicKey)
+      
+      if (!accountInfo) {
+        console.log(`❌ No account found at address: ${accountAddress}`)
+        return
+      }
+      
+      console.log(`✅ Account exists! Owner: ${accountInfo.owner.toString()}, Size: ${accountInfo.data.length} bytes`)
+      
+      // Check if it's owned by our program
+      const PROGRAM_ID = new PublicKey(config.solana.programId)
+      if (accountInfo.owner.equals(PROGRAM_ID)) {
+        console.log(`✅ Account is owned by our program`)
+        
+        // Try parsing with CORRECTED field order: is_initialized, id, name, description, avatar, owner, member_count, rules, is_sb_community
+        console.log(`🔍 Attempting to parse with corrected field order...`)
+        const data = accountInfo.data
+        let offset = 0
+        
+        try {
+          // Parse is_initialized
+          const is_initialized = data[offset]
+          console.log(`   is_initialized: ${is_initialized}`)
+          offset += 1
+          
+          // Parse id (u64)
+          const id = data.readBigUInt64LE(offset)
+          console.log(`   id: ${id}`)
+          offset += 8
+          
+          // Parse name (string) - FIRST string field
+          const nameLength = data.readUInt32LE(offset)
+          console.log(`   name length: ${nameLength}`)
+          offset += 4
+          
+          if (nameLength > 0 && nameLength < 100 && offset + nameLength <= data.length) {
+            const name = data.slice(offset, offset + nameLength).toString('utf8')
+            console.log(`   name: "${name}"`)
+            offset += nameLength
+            
+            // Parse description (string)
+            const descriptionLength = data.readUInt32LE(offset)
+            console.log(`   description length: ${descriptionLength}`)
+            offset += 4
+            
+            if (descriptionLength > 0 && descriptionLength < 1000 && offset + descriptionLength <= data.length) {
+              const description = data.slice(offset, offset + descriptionLength).toString('utf8')
+              console.log(`   description: "${description}"`)
+              offset += descriptionLength
+              
+              // Parse avatar (string)
+              const avatarLength = data.readUInt32LE(offset)
+              console.log(`   avatar length: ${avatarLength}`)
+              offset += 4
+              
+              if (avatarLength >= 0 && avatarLength < 500 && offset + avatarLength <= data.length) {
+                const avatar = data.slice(offset, offset + avatarLength).toString('utf8')
+                console.log(`   avatar: "${avatar}"`)
+                offset += avatarLength
+                
+                // Parse owner/creator (32 bytes) - comes AFTER strings
+                const creator = data.slice(offset, offset + 32)
+                console.log(`   creator: ${new PublicKey(creator).toString()}`)
+                offset += 32
+                
+                // Parse member_count (u64)
+                const member_count = data.readBigUInt64LE(offset)
+                console.log(`   member_count: ${member_count}`)
+                offset += 8
+                
+                console.log(`✅ Successfully parsed community with corrected field order!`)
+                console.log(`🎉 Community: "${name}" by ${new PublicKey(creator).toString()}`)
+              } else {
+                console.log(`❌ Invalid avatar length or not enough data`)
+              }
+            } else {
+              console.log(`❌ Invalid description length or not enough data`)
+            }
+          } else {
+            console.log(`❌ Invalid name length or not enough data`)
+          }
+        } catch (parseError) {
+          console.log(`❌ Error parsing community data:`, parseError)
+        }
+      } else {
+        console.log(`❌ Account is owned by different program: ${accountInfo.owner.toString()}`)
+        console.log(`   Expected: ${PROGRAM_ID.toString()}`)
+      }
+    } catch (error) {
+      console.log(`❌ Error checking community account:`, error)
+    }
+  }
+
+  // Make test function available globally for console testing
+  useEffect(() => {
+    (window as any).testCommunityAccount = testCommunityAccount;
+    (window as any).testCommunityAccountCorrected = testCommunityAccountCorrected;
+    return () => {
+      delete (window as any).testCommunityAccount;
+      delete (window as any).testCommunityAccountCorrected;
+    }
+  }, [connection, testCommunityAccount, testCommunityAccountCorrected])
 
   useEffect(() => {
     loadSubblocks()
@@ -85,77 +306,23 @@ export default function SubBlocksPage() {
       setLoading(true)
       console.log('🔍 Fetching SubBlocks from blockchain...')
       
-      // Get the program ID from the useBlocksProgram hook
-      const PROGRAM_ID = new PublicKey(config.solana.programId)
+      const communities = await getCommunities()
+      console.log(`✅ Loaded ${communities.length} SubBlocks from blockchain`)
+      setSubblocks(communities)
       
-      try {
-        const accounts = await connection.getProgramAccounts(PROGRAM_ID)
-        console.log(`📊 Found ${accounts.length} total program accounts`)
-        
-        const subblocks: Community[] = []
-        let communitiesFound = 0
-        
-        // Scan through accounts to find community accounts
-        for (const { account, pubkey } of accounts) {
-          try {
-            if (account.data.length === 0) continue
-            
-            // Try to parse as community account
-            // This is a placeholder - you'd need to implement manualParseCommunity
-            // similar to manualParseProfile and manualParsePost
-            const communityAccount = manualParseCommunity(account.data)
-            if (!communityAccount) continue
-            
-            communitiesFound++
-            console.log(`🏘️ SubBlock ${communitiesFound}: "${communityAccount.name}" created by ${new PublicKey(communityAccount.creator).toString()}`)
-            
-            if (communityAccount.is_initialized === 1) {
-              const community: Community = {
-                isInitialized: true,
-                id: Number(communityAccount.id),
-                creator: new PublicKey(communityAccount.creator),
-                name: communityAccount.name,
-                description: communityAccount.description,
-                avatar: communityAccount.avatar,
-                rules: communityAccount.rules,
-                memberCount: Number(communityAccount.member_count),
-                createdAt: Number(communityAccount.created_at) * 1000,
-                isPrivate: communityAccount.is_private === 1,
-              }
-              
-              subblocks.push(community)
-            }
-          } catch (error) {
-            // Not a community account or parsing failed, continue
-            continue
-          }
-        }
-        
-        console.log(`📊 Total SubBlocks found: ${communitiesFound}`)
-        console.log(`✅ Loaded ${subblocks.length} SubBlocks from blockchain`)
-        setSubblocks(subblocks)
-      } catch (error) {
-        console.error('Error fetching from blockchain:', error)
-        // For now, show empty state since we removed mock data
-        setSubblocks([])
+      // Count user's created SubBlocks
+      if (publicKey) {
+        const userCreatedCount = communities.filter(community => 
+          community.creator.equals(publicKey)
+        ).length
+        setUserCreatedSubblocksCount(userCreatedCount)
+        console.log(`👤 User has created ${userCreatedCount} SubBlocks`)
       }
     } catch (error) {
       console.error('Failed to load SubBlocks:', error)
       setSubblocks([])
     } finally {
       setLoading(false)
-    }
-  }
-
-  // Manual community parser - would need to be implemented
-  const manualParseCommunity = (data: Buffer): any | null => {
-    try {
-      // This would implement the community account parsing
-      // similar to manualParseProfile and manualParsePost
-      // For now, return null since communities might not exist yet
-      return null
-    } catch (error) {
-      return null
     }
   }
 
@@ -189,6 +356,11 @@ export default function SubBlocksPage() {
   const canJoinSubblock = (subblock: Community) => {
     if (!userProfile) return false
     
+    // Creators can always access their own SubBlocks
+    if (publicKey && subblock.creator.equals(publicKey)) {
+      return true
+    }
+    
     // Check if SubBlock requires high UCR
     const requiresHighUCR = subblock.rules.some(rule => 
       rule.toLowerCase().includes('ucr') && 
@@ -203,6 +375,11 @@ export default function SubBlocksPage() {
 
   const getJoinButtonText = (subblock: Community) => {
     if (!userProfile) return 'Connect Wallet to Join'
+    
+    // Check if current user is the creator
+    if (publicKey && subblock.creator.equals(publicKey)) {
+      return 'Enter SubBlock'
+    }
     
     const requiresHighUCR = subblock.rules.some(rule => 
       rule.toLowerCase().includes('ucr') && 
@@ -233,6 +410,11 @@ export default function SubBlocksPage() {
 
     if (userProfile.userCreditRating < 2.5) {
       toast.error('You need UCR 2.5+ to create SubBlocks')
+      return
+    }
+
+    if (userCreatedSubblocksCount >= 3) {
+      toast.error('Maximum 3 SubBlocks allowed per user')
       return
     }
 
@@ -288,6 +470,17 @@ export default function SubBlocksPage() {
   )
 
   const formatMemberCount = (count: number) => {
+    // Handle edge cases and invalid numbers
+    if (!count || count === 0 || isNaN(count) || count < 0) {
+      return '1' // Default to 1 member (the creator)
+    }
+    
+    // If the number is suspiciously large (likely a parsing error), default to 1
+    if (count > 1000000) {
+      console.warn(`Suspiciously large member count: ${count}, defaulting to 1`)
+      return '1'
+    }
+    
     if (count >= 1000) {
       return `${(count / 1000).toFixed(1)}k`
     }
@@ -315,12 +508,18 @@ export default function SubBlocksPage() {
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          disabled={!publicKey || !userProfile || userProfile.userCreditRating < 2.5}
+          disabled={!publicKey || !userProfile || userProfile.userCreditRating < 2.5 || userCreatedSubblocksCount >= 3}
           className="flex items-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          title={!userProfile || userProfile.userCreditRating < 2.5 ? 'UCR 2.5+ required to create SubBlocks' : ''}
+          title={
+            !userProfile || userProfile.userCreditRating < 2.5 
+              ? 'UCR 2.5+ required to create SubBlocks' 
+              : userCreatedSubblocksCount >= 3
+              ? 'Maximum 3 SubBlocks allowed per user'
+              : ''
+          }
         >
           <Plus className="h-5 w-5" />
-          <span>Create SubBlock</span>
+          <span>Create SubBlock {userCreatedSubblocksCount > 0 && `(${userCreatedSubblocksCount}/3)`}</span>
         </button>
       </div>
 
@@ -333,6 +532,36 @@ export default function SubBlocksPage() {
               <h3 className="text-sm font-medium text-yellow-900">Low User Credit Rating</h3>
               <p className="text-xs text-yellow-700">
                 Your UCR is {userProfile.userCreditRating.toFixed(1)}. You need UCR 2.5+ to create SubBlocks and join elite communities.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SubBlock Limit Warning */}
+      {userProfile && userProfile.userCreditRating >= 2.5 && userCreatedSubblocksCount >= 2 && (
+        <div className={`border rounded-lg p-4 mb-6 ${
+          userCreatedSubblocksCount >= 3 
+            ? 'bg-red-50 border-red-200' 
+            : 'bg-orange-50 border-orange-200'
+        }`}>
+          <div className="flex items-center space-x-3">
+            <AlertCircle className={`h-6 w-6 ${
+              userCreatedSubblocksCount >= 3 ? 'text-red-600' : 'text-orange-600'
+            }`} />
+            <div>
+              <h3 className={`text-sm font-medium ${
+                userCreatedSubblocksCount >= 3 ? 'text-red-900' : 'text-orange-900'
+              }`}>
+                {userCreatedSubblocksCount >= 3 ? 'SubBlock Limit Reached' : 'Approaching SubBlock Limit'}
+              </h3>
+              <p className={`text-xs ${
+                userCreatedSubblocksCount >= 3 ? 'text-red-700' : 'text-orange-700'
+              }`}>
+                {userCreatedSubblocksCount >= 3 
+                  ? 'You have reached the maximum of 3 SubBlocks per user.'
+                  : `You have created ${userCreatedSubblocksCount}/3 SubBlocks. Only ${3 - userCreatedSubblocksCount} remaining.`
+                }
               </p>
             </div>
           </div>
@@ -411,13 +640,20 @@ export default function SubBlocksPage() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
           {filteredSubblocks.map((subblock) => {
             const canJoin = canJoinSubblock(subblock)
             const isElite = subblock.rules.some(rule => rule.toLowerCase().includes('ucr'))
             
+            // Debug: Log member count for each subblock
+            console.log(`SubBlock "${subblock.name}" member count:`, subblock.memberCount, typeof subblock.memberCount)
+            // Debug: Log avatar URL for each subblock
+            console.log(`SubBlock "${subblock.name}" avatar URL:`, subblock.avatar)
+            // Debug: Log rules for each subblock
+            console.log(`SubBlock "${subblock.name}" rules:`, subblock.rules)
+            
             return (
-              <div key={subblock.id} className={`bg-white rounded-lg shadow-sm border overflow-hidden hover:shadow-md transition-shadow ${
+              <div key={subblock.id} className={`bg-white rounded-lg shadow-sm border overflow-hidden hover:shadow-md transition-shadow flex flex-col ${
                 isElite ? 'border-yellow-200 ring-1 ring-yellow-100' : 'border-gray-200'
               }`}>
                 {/* Elite Badge */}
@@ -428,32 +664,40 @@ export default function SubBlocksPage() {
                 )}
                 
                 {/* SubBlock Header */}
-                <div className="p-6">
+                <div className="p-6 flex-1 flex flex-col">
                   <div className="flex items-center space-x-3 mb-4">
                     <img
                       src={subblock.avatar || `https://picsum.photos/48/48?random=${subblock.id}`}
                       alt={subblock.name}
-                      className="h-12 w-12 rounded-full object-cover"
+                      className="h-12 w-12 rounded-full object-cover flex-shrink-0"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        // Only use fallback if the original src was not already a fallback
+                        if (!target.src.includes('picsum.photos')) {
+                          console.log(`Failed to load avatar for ${subblock.name}: ${target.src}`);
+                          target.src = `https://picsum.photos/48/48?random=${subblock.id}`;
+                        }
+                      }}
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2 mb-1">
                         <h3 className="font-semibold text-gray-900 truncate">{subblock.name}</h3>
-                        <Globe className="h-4 w-4 text-gray-400" />
+                        <Globe className="h-4 w-4 text-gray-400 flex-shrink-0" />
                       </div>
                       <p className="text-sm text-gray-500 flex items-center space-x-1">
-                        <Users className="h-3 w-3" />
+                        <Users className="h-3 w-3 flex-shrink-0" />
                         <span>{formatMemberCount(subblock.memberCount)} members</span>
                       </p>
                     </div>
                   </div>
 
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-2">{subblock.description}</p>
+                  <p className="text-gray-600 text-sm mb-4 line-clamp-2 flex-1">{subblock.description}</p>
 
                   {/* Rules Preview */}
-                  {subblock.rules.length > 0 && (
+                  {subblock.rules && subblock.rules.length > 0 && (
                     <div className="mb-4">
                       <p className="text-xs font-medium text-gray-700 mb-1">Rules:</p>
-                      <p className="text-xs text-gray-600">
+                      <p className="text-xs text-gray-600 line-clamp-2">
                         {subblock.rules.slice(0, 2).join(' • ')}
                         {subblock.rules.length > 2 && '...'}
                       </p>
@@ -470,7 +714,13 @@ export default function SubBlocksPage() {
 
                   <button 
                     disabled={!canJoin}
-                    className={`w-full px-4 py-2 rounded-lg transition-colors font-medium ${
+                    onClick={() => {
+                      if (canJoin) {
+                        // Navigate to SubBlock detail page
+                        window.location.href = `/subblock/${subblock.id}`;
+                      }
+                    }}
+                    className={`w-full px-4 py-2 rounded-lg transition-colors font-medium mt-auto ${
                       canJoin 
                         ? 'bg-blue-600 text-white hover:bg-blue-700' 
                         : 'bg-gray-200 text-gray-500 cursor-not-allowed'

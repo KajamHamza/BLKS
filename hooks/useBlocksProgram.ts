@@ -1873,7 +1873,7 @@ export function useBlocksProgram() {
       return new PostAccount({
         is_initialized,
         id,
-        author: new Uint8Array(author),
+        author,
         content,
         timestamp,
         likes,
@@ -1884,13 +1884,143 @@ export function useBlocksProgram() {
         in_kill_zone
       })
     } catch (error) {
-      // Silent failure - not a post account
+      // Silent failure - not a post account or invalid data
+      return null
+    }
+  }
+
+  // Manual community parser - bypasses Borsh deserialization issues
+  const manualParseCommunity = (data: Buffer): CommunityAccount | null => {
+    try {
+      // Basic validation - communities should have a minimum size
+      if (data.length < 100) return null // Communities need at least 100 bytes for basic structure
+      
+      let offset = 0
+      
+      // Parse each field manually based on CommunityAccount structure:
+      // is_initialized: u8, id: u64, creator: [32]u8, name: string, description: string, 
+      // avatar: string, rules: [string], member_count: u64, created_at: u64, is_private: u8
+      
+      const is_initialized = data[offset]
+      if (is_initialized !== 1) return null // Must be initialized
+      offset += 1
+      
+      // Parse id (u64)
+      if (offset + 8 > data.length) return null
+      const id = data.readBigUInt64LE(offset)
+      offset += 8
+      // Parse name (string) - FIRST string field in Rust struct
+      if (offset + 4 > data.length) return null
+      const nameLength = data.readUInt32LE(offset)
+      offset += 4
+      
+      if (nameLength > 100 || nameLength === 0) return null // Validate name length
+      if (offset + nameLength > data.length) return null
+      
+      const name = data.slice(offset, offset + nameLength).toString('utf8')
+      offset += nameLength
+      
+      // Parse description (string) - SECOND string field in Rust struct
+      if (offset + 4 > data.length) return null
+      const descriptionLength = data.readUInt32LE(offset)
+      offset += 4
+      
+      if (descriptionLength > 1000) return null // Validate description length
+      if (offset + descriptionLength > data.length) return null
+      
+      const description = data.slice(offset, offset + descriptionLength).toString('utf8')
+      offset += descriptionLength
+      
+      // Parse avatar (string) - THIRD string field in Rust struct
+      if (offset + 4 > data.length) return null
+      const avatarLength = data.readUInt32LE(offset)
+      offset += 4
+      
+      if (avatarLength > 500) return null // Validate avatar length
+      if (offset + avatarLength > data.length) return null
+      
+      const avatar = data.slice(offset, offset + avatarLength).toString('utf8')
+      offset += avatarLength
+      
+      // Parse creator/owner (32 bytes) - comes AFTER all strings in Rust struct
+      if (offset + 32 > data.length) return null
+      const creator = data.slice(offset, offset + 32)
+      offset += 32
+      
+      // Parse rules array (Vec<String>)
+      if (offset + 4 > data.length) return null
+      const rulesCount = data.readUInt32LE(offset)
+      offset += 4
+      
+      if (rulesCount > 50) return null // Validate rules count
+      
+      const rules: string[] = []
+      for (let i = 0; i < rulesCount; i++) {
+        if (offset + 4 > data.length) return null
+        const ruleLength = data.readUInt32LE(offset)
+        offset += 4
+        
+        if (ruleLength > 200) return null // Validate rule length
+        if (offset + ruleLength > data.length) return null
+        
+        const rule = data.slice(offset, offset + ruleLength).toString('utf8')
+        offset += ruleLength
+        rules.push(rule)
+      }
+      
+      // Parse member_count (u64)
+      if (offset + 8 > data.length) return null
+      const member_count = data.readBigUInt64LE(offset)
+      offset += 8
+      
+      // Parse created_at (u64)
+      if (offset + 8 > data.length) return null
+      const created_at = data.readBigUInt64LE(offset)
+      offset += 8
+      
+      // Parse is_private (u8)
+      if (offset + 1 > data.length) return null
+      const is_private = data[offset]
+      offset += 1
+      
+      return new CommunityAccount({
+        is_initialized,
+        id,
+        creator,
+        name,
+        description,
+        avatar,
+        rules,
+        member_count,
+        created_at,
+        is_private
+      })
+    } catch (error) {
+      // Silent failure - not a community account or invalid data
       return null
     }
   }
 
   // Convert CommunityAccount to Community interface
   const convertCommunityAccount = (communityAccount: CommunityAccount): Community => {
+    // Handle member_count conversion with safety checks
+    let memberCount = 1 // Default to 1 (creator)
+    try {
+      const rawMemberCount = Number(communityAccount.member_count)
+      console.log(`Converting member_count: ${communityAccount.member_count} (bigint) -> ${rawMemberCount} (number)`)
+      
+      // If the number is reasonable, use it; otherwise default to 1
+      if (rawMemberCount >= 0 && rawMemberCount <= 1000000) {
+        memberCount = rawMemberCount
+      } else {
+        console.warn(`Invalid member count ${rawMemberCount}, defaulting to 1`)
+        memberCount = 1
+      }
+    } catch (error) {
+      console.warn(`Error converting member_count: ${error}, defaulting to 1`)
+      memberCount = 1
+    }
+    
     return {
       isInitialized: communityAccount.is_initialized === 1,
       id: Number(communityAccount.id),
@@ -1899,9 +2029,70 @@ export function useBlocksProgram() {
       description: communityAccount.description,
       avatar: communityAccount.avatar,
       rules: communityAccount.rules,
-      memberCount: Number(communityAccount.member_count),
-      createdAt: Number(communityAccount.created_at) * 1000, // Convert seconds to milliseconds
+      memberCount: memberCount,
+      createdAt: Number(communityAccount.created_at) * 1000, // Convert to milliseconds
       isPrivate: communityAccount.is_private === 1,
+    }
+  }
+
+  const getCommunities = async (): Promise<Community[]> => {
+    try {
+      console.log('🔍 Fetching Communities from blockchain...')
+      
+      const accounts = await connection.getProgramAccounts(PROGRAM_ID)
+      console.log(`📊 Found ${accounts.length} total program accounts`)
+      
+      const communities: Community[] = []
+      let communitiesFound = 0
+      let accountsScanned = 0
+      
+      // Scan through accounts to find community accounts
+      for (const { account, pubkey } of accounts) {
+        try {
+          accountsScanned++
+          if (account.data.length === 0) {
+            console.log(`⏭️ Account ${accountsScanned}: ${pubkey.toString().slice(0, 8)} - empty data`)
+            continue
+          }
+          
+          console.log(`🔍 Account ${accountsScanned}: ${pubkey.toString().slice(0, 8)} - data length: ${account.data.length} bytes`)
+          
+          // Log first few bytes to understand the structure
+          const firstBytes = Array.from(account.data.slice(0, Math.min(20, account.data.length)))
+          console.log(`   First bytes: [${firstBytes.join(', ')}]`)
+          
+          // Try to parse as community account
+          const communityAccount = manualParseCommunity(account.data)
+          if (!communityAccount) {
+            console.log(`   ❌ Not a community account`)
+            continue
+          }
+          
+          communitiesFound++
+          console.log(`🏘️ Community ${communitiesFound}: "${communityAccount.name}" created by ${new PublicKey(communityAccount.creator).toString()}`)
+          console.log(`   ID: ${communityAccount.id}, Members: ${communityAccount.member_count}, Private: ${communityAccount.is_private}`)
+          
+          if (communityAccount.is_initialized === 1) {
+            const community = convertCommunityAccount(communityAccount)
+            communities.push(community)
+            console.log(`   ✅ Added to communities list`)
+          } else {
+            console.log(`   ⚠️ Community not initialized (is_initialized: ${communityAccount.is_initialized})`)
+          }
+        } catch (error) {
+          console.log(`   ❌ Error parsing account ${accountsScanned}: ${error}`)
+          // Not a community account or parsing failed, continue
+          continue
+        }
+      }
+      
+      console.log(`📊 Scanned ${accountsScanned} accounts`)
+      console.log(`📊 Total Communities found: ${communitiesFound}`)
+      console.log(`✅ Loaded ${communities.length} Communities from blockchain`)
+      return communities
+    } catch (error) {
+      console.error('Failed to load Communities:', error)
+      return []
     }
   }
 
@@ -2652,6 +2843,7 @@ export function useBlocksProgram() {
     getProfile,
     getProfileByUsername,
     getPosts,
+    getCommunities,
     getProfilePDA,
     getPostPDA,
     checkProfileAtPDA,
