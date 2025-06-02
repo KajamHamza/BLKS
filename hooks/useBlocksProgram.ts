@@ -329,7 +329,17 @@ class FollowProfileInstruction {
   constructor(fields: {
     profile_id: PublicKey
   }) {
-    this.profile_id = fields.profile_id.toBuffer()
+    // Ensure we have a proper PublicKey instance
+    let publicKey: PublicKey
+    if (fields.profile_id instanceof PublicKey) {
+      publicKey = fields.profile_id
+    } else if (typeof fields.profile_id === 'string') {
+      publicKey = new PublicKey(fields.profile_id)
+    } else {
+      throw new Error(`Invalid profile_id type: ${typeof fields.profile_id}`)
+    }
+    
+    this.profile_id = publicKey.toBuffer()
   }
 }
 
@@ -501,6 +511,189 @@ const clearProfileCache = (walletAddress?: string) => {
 
 // Simple in-memory comment storage (resets on page refresh)
 let commentsStorage: { [postId: number]: Comment[] } = {}
+
+// Comment account tracking - store comment account addresses to distinguish from posts
+const getCommentAccountsKey = () => 'comment_accounts'
+const getCommentMappingKey = () => 'comment_to_post_mapping'
+
+// Store comment account address and its parent post ID
+const trackCommentAccount = (commentAccountAddress: string, parentPostId: number) => {
+  try {
+    // Track comment accounts
+    const commentAccountsKey = getCommentAccountsKey()
+    const existingAccounts = localStorage.getItem(commentAccountsKey)
+    const commentAccounts: string[] = existingAccounts ? JSON.parse(existingAccounts) : []
+    
+    if (!commentAccounts.includes(commentAccountAddress)) {
+      commentAccounts.push(commentAccountAddress)
+      localStorage.setItem(commentAccountsKey, JSON.stringify(commentAccounts))
+    }
+    
+    // Track comment to post mapping
+    const mappingKey = getCommentMappingKey()
+    const existingMapping = localStorage.getItem(mappingKey)
+    const commentMapping: { [commentAccount: string]: number } = existingMapping ? JSON.parse(existingMapping) : {}
+    
+    commentMapping[commentAccountAddress] = parentPostId
+    localStorage.setItem(mappingKey, JSON.stringify(commentMapping))
+    
+    console.log(`📝 Tracked comment account ${commentAccountAddress.slice(0, 8)} for post ${parentPostId}`)
+  } catch (error) {
+    console.error('Failed to track comment account:', error)
+  }
+}
+
+// Check if an account address is a comment
+const isCommentAccount = (accountAddress: string): boolean => {
+  try {
+    const commentAccountsKey = getCommentAccountsKey()
+    const existingAccounts = localStorage.getItem(commentAccountsKey)
+    const commentAccounts: string[] = existingAccounts ? JSON.parse(existingAccounts) : []
+    return commentAccounts.includes(accountAddress)
+  } catch (error) {
+    return false
+  }
+}
+
+// Get parent post ID for a comment account
+const getParentPostId = (commentAccountAddress: string): number | null => {
+  try {
+    const mappingKey = getCommentMappingKey()
+    const existingMapping = localStorage.getItem(mappingKey)
+    const commentMapping: { [commentAccount: string]: number } = existingMapping ? JSON.parse(existingMapping) : {}
+    return commentMapping[commentAccountAddress] || null
+  } catch (error) {
+    return null
+  }
+}
+
+// User likes tracking - store in localStorage
+const getUserLikesKey = (walletAddress: string) => `user_likes_${walletAddress}`
+
+// Get user's liked posts from localStorage
+const getUserLikedPosts = (walletAddress: string): number[] => {
+  try {
+    const likesKey = getUserLikesKey(walletAddress)
+    const existingLikes = localStorage.getItem(likesKey)
+    return existingLikes ? JSON.parse(existingLikes) : []
+  } catch (error) {
+    console.error('Failed to get user likes:', error)
+    return []
+  }
+}
+
+// Add post to user's liked posts
+const addUserLike = (walletAddress: string, postId: number) => {
+  try {
+    const likesKey = getUserLikesKey(walletAddress)
+    const existingLikes = getUserLikedPosts(walletAddress)
+    if (!existingLikes.includes(postId)) {
+      existingLikes.push(postId)
+      localStorage.setItem(likesKey, JSON.stringify(existingLikes))
+    }
+  } catch (error) {
+    console.error('Failed to add user like:', error)
+  }
+}
+
+// Remove post from user's liked posts
+const removeUserLike = (walletAddress: string, postId: number) => {
+  try {
+    const likesKey = getUserLikesKey(walletAddress)
+    const existingLikes = getUserLikedPosts(walletAddress)
+    const updatedLikes = existingLikes.filter(id => id !== postId)
+    localStorage.setItem(likesKey, JSON.stringify(updatedLikes))
+  } catch (error) {
+    console.error('Failed to remove user like:', error)
+  }
+}
+
+// Check if user has liked a post
+const hasUserLikedPost = (walletAddress: string, postId: number): boolean => {
+  const userLikes = getUserLikedPosts(walletAddress)
+  return userLikes.includes(postId)
+}
+
+// User follows tracking - store in localStorage
+const getUserFollowsKey = (walletAddress: string) => `user_follows_${walletAddress}`
+
+// Get user's followed profiles from localStorage
+const getUserFollowedProfiles = (walletAddress: string): string[] => {
+  try {
+    const followsKey = getUserFollowsKey(walletAddress)
+    const existingFollows = localStorage.getItem(followsKey)
+    return existingFollows ? JSON.parse(existingFollows) : []
+  } catch (error) {
+    console.error('Failed to get user follows:', error)
+    return []
+  }
+}
+
+// Add profile to user's followed profiles
+const addUserFollow = (walletAddress: string, profileOwnerKey: string) => {
+  try {
+    console.log(`📝 Adding follow: ${walletAddress.slice(0, 8)} -> ${profileOwnerKey.slice(0, 8)}`)
+    
+    const followsKey = getUserFollowsKey(walletAddress)
+    const existingFollows = getUserFollowedProfiles(walletAddress)
+    
+    console.log(`  Follow key: ${followsKey}`)
+    console.log(`  Existing follows: ${JSON.stringify(existingFollows)}`)
+    console.log(`  Adding profile: ${profileOwnerKey}`)
+    
+    if (!existingFollows.includes(profileOwnerKey)) {
+      existingFollows.push(profileOwnerKey)
+      localStorage.setItem(followsKey, JSON.stringify(existingFollows))
+      console.log(`  Updated follows: ${JSON.stringify(existingFollows)}`)
+      console.log(`📝 Tracked follow: ${walletAddress.slice(0, 8)} -> ${profileOwnerKey.slice(0, 8)}`)
+    } else {
+      console.log(`  Already following this profile`)
+    }
+  } catch (error) {
+    console.error('Failed to add user follow:', error)
+  }
+}
+
+// Remove profile from user's followed profiles
+const removeUserFollow = (walletAddress: string, profileOwnerKey: string) => {
+  try {
+    console.log(`📝 Removing follow: ${walletAddress.slice(0, 8)} -> ${profileOwnerKey.slice(0, 8)}`)
+    
+    const followsKey = getUserFollowsKey(walletAddress)
+    const existingFollows = getUserFollowedProfiles(walletAddress)
+    
+    console.log(`  Follow key: ${followsKey}`)
+    console.log(`  Existing follows: ${JSON.stringify(existingFollows)}`)
+    console.log(`  Removing profile: ${profileOwnerKey}`)
+    
+    const updatedFollows = existingFollows.filter(key => key !== profileOwnerKey)
+    localStorage.setItem(followsKey, JSON.stringify(updatedFollows))
+    
+    console.log(`  Updated follows: ${JSON.stringify(updatedFollows)}`)
+    console.log(`📝 Removed follow: ${walletAddress.slice(0, 8)} -> ${profileOwnerKey.slice(0, 8)}`)
+  } catch (error) {
+    console.error('Failed to remove user follow:', error)
+  }
+}
+
+// Check if user is following a profile
+const isUserFollowingProfile = (walletAddress: string, profileOwnerKey: string): boolean => {
+  try {
+    console.log(`🔍 Checking if ${walletAddress.slice(0, 8)} follows ${profileOwnerKey.slice(0, 8)}`)
+    
+    const userFollows = getUserFollowedProfiles(walletAddress)
+    const isFollowing = userFollows.includes(profileOwnerKey)
+    
+    console.log(`  User follows: ${JSON.stringify(userFollows)}`)
+    console.log(`  Looking for: ${profileOwnerKey}`)
+    console.log(`  Result: ${isFollowing}`)
+    
+    return isFollowing
+  } catch (error) {
+    console.error('Failed to check follow status:', error)
+    return false
+  }
+}
 
 export function useBlocksProgram() {
   const { connection } = useConnection()
@@ -849,6 +1042,12 @@ export function useBlocksProgram() {
         try {
           if (account.data.length === 0) continue
 
+          // Skip if this is a known comment account
+          if (isCommentAccount(pubkey.toString())) {
+            console.log(`⏭️ Skipping comment account: ${pubkey.toString().slice(0, 8)}`)
+            continue
+          }
+
           const postAccount = manualParsePost(account.data)
           if (postAccount && postAccount.is_initialized === 1 && postAccount.content) {
             const post = convertPostAccount(postAccount)
@@ -861,7 +1060,7 @@ export function useBlocksProgram() {
       }
 
       posts.sort((a, b) => b.timestamp - a.timestamp)
-      console.log(`✅ Loaded ${posts.length} posts from blockchain`)
+      console.log(`✅ Loaded ${posts.length} posts from blockchain (comments filtered out)`)
       
       // Cache the results
       postsCache = { posts, timestamp: Date.now() }
@@ -873,19 +1072,84 @@ export function useBlocksProgram() {
     }
   }
 
-  // Get comments for a specific post - SIMPLIFIED
+  // Get comments for a specific post - REAL BLOCKCHAIN IMPLEMENTATION
   const getCommentsForPost = async (postId: number): Promise<Comment[]> => {
     try {
-      console.log(`🔍 Getting comments for post ID ${postId}...`)
+      console.log(`🔍 Getting comments for post ID ${postId} from blockchain...`)
       
-      // Return comments from in-memory storage
-      const comments = commentsStorage[postId] || []
-      console.log(`✅ Found ${comments.length} comments for post ${postId}`)
+      // Scan all program accounts to find comments for this post
+      const accounts = await connection.getProgramAccounts(PROGRAM_ID)
+      const comments: Comment[] = []
       
-      return comments
+      console.log(`📊 Scanning ${accounts.length} program accounts for comments...`)
+      
+      for (const { account, pubkey } of accounts) {
+        try {
+          if (account.data.length === 0) continue
+          
+          // Check if this account is a known comment account for our target post
+          if (isCommentAccount(pubkey.toString())) {
+            const parentPostId = getParentPostId(pubkey.toString())
+            
+            if (parentPostId === postId) {
+              // This is a comment for our target post
+              const postAccount = manualParsePost(account.data)
+              if (postAccount && postAccount.is_initialized === 1 && postAccount.content) {
+                console.log(`💬 Found comment: "${postAccount.content.substring(0, 30)}..." for post ${postId}`)
+                
+                // Get the comment author's profile
+                const authorPublicKey = new PublicKey(postAccount.author)
+                const authorProfile = await getProfile(authorPublicKey)
+                
+                const comment: Comment = {
+                  id: Number(postAccount.id),
+                  parentPostId: postId,
+                  author: authorPublicKey,
+                  content: postAccount.content,
+                  timestamp: Number(postAccount.timestamp) * 1000, // Convert to milliseconds
+                  likes: Number(postAccount.likes),
+                  authorProfile: authorProfile
+                }
+                
+                comments.push(comment)
+              }
+            }
+          }
+        } catch (error) {
+          continue
+        }
+      }
+      
+      // Also include any comments from in-memory storage (for immediate display after posting)
+      const memoryComments = commentsStorage[postId] || []
+      
+      // Combine and deduplicate comments
+      const allComments = [...comments]
+      
+      // Add memory comments that aren't already in blockchain comments
+      for (const memoryComment of memoryComments) {
+        const exists = allComments.some(c => 
+          c.author.equals(memoryComment.author) && 
+          c.content === memoryComment.content &&
+          Math.abs(c.timestamp - memoryComment.timestamp) < 10000 // Within 10 seconds
+        )
+        if (!exists) {
+          allComments.push(memoryComment)
+        }
+      }
+      
+      // Sort by timestamp (oldest first for comments)
+      allComments.sort((a, b) => a.timestamp - b.timestamp)
+      
+      console.log(`✅ Found ${allComments.length} comments for post ${postId} (${comments.length} from blockchain, ${memoryComments.length} from memory)`)
+      return allComments
     } catch (error) {
-      console.error('Error fetching comments:', error)
-      return []
+      console.error('Error fetching comments from blockchain:', error)
+      
+      // Fallback to in-memory storage
+      const memoryComments = commentsStorage[postId] || []
+      console.log(`⚠️ Fallback: returning ${memoryComments.length} comments from memory`)
+      return memoryComments
     }
   }
 
@@ -1173,6 +1437,12 @@ export function useBlocksProgram() {
 
       console.log('✅ Transaction confirmed! Post liked successfully!')
       
+      // Track user like in localStorage
+      if (publicKey) {
+        addUserLike(publicKey.toString(), postId)
+        console.log(`📝 Tracked like for user ${publicKey.toString().slice(0, 8)} on post ${postId}`)
+      }
+      
       // Clear posts cache to force refresh
       postsCache = null
       
@@ -1194,6 +1464,131 @@ export function useBlocksProgram() {
         toast.error(`Failed to like post: ${error.message || 'Unknown error'}`)
       }
       
+      throw error
+    }
+  }
+
+  // Unlike post - REAL IMPLEMENTATION
+  const unlikePost = async (postId: number, postAuthor: PublicKey) => {
+    if (!publicKey) throw new Error('Wallet not connected')
+
+    try {
+      console.log(`👎 Attempting to unlike post ID ${postId} by author ${postAuthor.toString().slice(0, 8)}...`)
+      
+      // Check SOL balance first
+      const balance = await checkSOLBalance()
+      console.log(`💰 Current SOL balance: ${balance}`)
+      if (balance < 0.01) {
+        throw new Error(`Insufficient SOL balance: ${balance}. Need at least 0.01 SOL for transaction fees.`)
+      }
+
+      // Find the actual post account and author's profile account by scanning all program accounts
+      console.log(`🔍 Searching for post ID ${postId} by author ${postAuthor.toString().slice(0, 8)}...`)
+      
+      const accounts = await connection.getProgramAccounts(PROGRAM_ID)
+      let postAccountAddress: PublicKey | null = null
+      let postAccount: PostAccount | null = null
+      let authorProfileAddress: PublicKey | null = null
+      
+      // First pass: find the post account
+      for (const { account, pubkey } of accounts) {
+        try {
+          // Skip comment accounts
+          if (isCommentAccount(pubkey.toString())) continue
+          
+          const parsedPost = manualParsePost(account.data)
+          if (parsedPost && 
+              parsedPost.is_initialized === 1 && 
+              Number(parsedPost.id) === postId &&
+              new PublicKey(parsedPost.author).equals(postAuthor)) {
+            postAccountAddress = pubkey
+            postAccount = parsedPost
+            console.log(`🎯 Found post ID ${postId} at address: ${pubkey.toString()}`)
+            break
+          }
+        } catch (error) {
+          continue
+        }
+      }
+
+      if (!postAccountAddress || !postAccount) {
+        throw new Error(`Post ID ${postId} by author ${postAuthor.toString().slice(0, 8)} not found on blockchain`)
+      }
+
+      // Second pass: find the author's profile account
+      console.log(`🔍 Searching for author's profile: ${postAuthor.toString().slice(0, 8)}...`)
+      for (const { account, pubkey } of accounts) {
+        try {
+          const parsedProfile = manualParseProfile(account.data)
+          if (parsedProfile && 
+              parsedProfile.is_initialized === 1 && 
+              new PublicKey(parsedProfile.owner).equals(postAuthor)) {
+            authorProfileAddress = pubkey
+            console.log(`✅ Found author profile account: ${pubkey.toString()}`)
+            break
+          }
+        } catch (error) {
+          continue
+        }
+      }
+
+      if (!authorProfileAddress) {
+        throw new Error(`Author's profile not found for ${postAuthor.toString().slice(0, 8)}`)
+      }
+
+      console.log(`📝 Post data verified: "${postAccount.content.slice(0, 30)}..." with ${Number(postAccount.likes)} likes`)
+
+      // For unlike, we'll use the same instruction as like (the smart contract should handle the toggle)
+      const instructionData = new LikePostInstruction({
+        post_id: BigInt(postId),
+      })
+
+      const likePostVariant = Buffer.from([3]) // LikePost instruction variant (same for unlike)
+      const serializedData = serialize(likePostSchema, instructionData)
+      const fullInstructionData = Buffer.concat([likePostVariant, Buffer.from(serializedData)])
+
+      const instruction = new TransactionInstruction({
+        keys: [
+          { pubkey: publicKey, isSigner: true, isWritable: false }, // User account (unliker)
+          { pubkey: postAccountAddress, isSigner: false, isWritable: true }, // Post account (to update likes)
+          { pubkey: authorProfileAddress, isSigner: false, isWritable: true }, // Author profile account (to update UCR)
+        ],
+        programId: PROGRAM_ID,
+        data: fullInstructionData,
+      })
+
+      const transaction = new Transaction().add(instruction)
+      const { blockhash } = await connection.getLatestBlockhash('processed')
+      transaction.recentBlockhash = blockhash
+      transaction.feePayer = publicKey
+
+      console.log('🚀 Sending unlike transaction...')
+      const signature = await sendTransaction(transaction, connection, {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      })
+
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight,
+      }, 'processed')
+
+      console.log('✅ Transaction confirmed! Post unliked successfully!')
+      
+      // Remove user like from localStorage
+      if (publicKey) {
+        removeUserLike(publicKey.toString(), postId)
+        console.log(`📝 Removed like for user ${publicKey.toString().slice(0, 8)} on post ${postId}`)
+      }
+      
+      // Clear posts cache to force refresh
+      postsCache = null
+      
+      return signature
+    } catch (error: any) {
+      console.error('❌ Unlike post error:', error)
       throw error
     }
   }
@@ -1590,20 +1985,70 @@ export function useBlocksProgram() {
     try {
       console.log('👥 Following profile:', profilePublicKey.toString())
 
-      // Find the follower's profile account (current user's profile)
-      console.log(`🔍 Searching for follower profile: ${publicKey.toString().slice(0, 8)}...`)
+      // Check SOL balance first
+      const balance = await checkSOLBalance()
+      console.log(`💰 Current SOL balance: ${balance}`)
+      if (balance < 0.01) {
+        throw new Error(`Insufficient SOL balance: ${balance}. Need at least 0.01 SOL for transaction fees.`)
+      }
+
+      // Ensure profilePublicKey is a proper PublicKey instance
+      let targetOwnerKey: PublicKey
+      if (profilePublicKey instanceof PublicKey) {
+        targetOwnerKey = profilePublicKey
+      } else if (typeof profilePublicKey === 'string') {
+        targetOwnerKey = new PublicKey(profilePublicKey)
+        console.log('🔄 Converted string to PublicKey:', targetOwnerKey.toString())
+      } else {
+        throw new Error(`Invalid profilePublicKey type: ${typeof profilePublicKey}`)
+      }
+
+      // Find both the target profile account and follower profile account
+      console.log(`🔍 Searching for target profile owned by: ${targetOwnerKey.toString().slice(0, 8)}...`)
+      console.log(`🔍 Searching for follower profile owned by: ${publicKey.toString().slice(0, 8)}...`)
+      
       const accounts = await connection.getProgramAccounts(PROGRAM_ID)
+      let targetProfileAddress: PublicKey | null = null
       let followerProfileAddress: PublicKey | null = null
       
       for (const { account, pubkey } of accounts) {
         try {
+          // Check if account belongs to our program
+          const accountInfo = await connection.getAccountInfo(pubkey)
+          if (!accountInfo || !accountInfo.owner.equals(PROGRAM_ID)) {
+            console.log(`⚠️ Account ${pubkey.toString().slice(0, 8)} doesn't belong to our program (owner: ${accountInfo?.owner.toString()})`)
+            continue
+          }
+
           const parsedProfile = manualParseProfile(account.data)
-          if (parsedProfile && 
-              parsedProfile.is_initialized === 1 && 
-              new PublicKey(parsedProfile.owner).equals(publicKey)) {
-            followerProfileAddress = pubkey
-            console.log(`✅ Found follower profile account: ${pubkey.toString()}`)
-            break
+          if (parsedProfile && parsedProfile.is_initialized === 1) {
+            const profileOwner = new PublicKey(parsedProfile.owner)
+            
+            // Check if this is the target profile (owned by the person we want to follow)
+            if (profileOwner.equals(targetOwnerKey)) {
+              // If we already found a target profile, prefer the first one (or you could add logic to pick a specific one)
+              if (!targetProfileAddress) {
+                targetProfileAddress = pubkey
+                console.log(`🎯 Found target profile account: ${pubkey.toString()}`)
+                console.log(`   Owner: ${profileOwner.toString()}`)
+                console.log(`   Username: ${parsedProfile.username}`)
+              } else {
+                console.log(`⚠️ Found additional profile for same owner: ${pubkey.toString()} (${parsedProfile.username}) - skipping`)
+              }
+            }
+            
+            // Check if this is the follower's profile (current user)
+            if (profileOwner.equals(publicKey)) {
+              // If we already found a follower profile, prefer the first one
+              if (!followerProfileAddress) {
+                followerProfileAddress = pubkey
+                console.log(`✅ Found follower profile account: ${pubkey.toString()}`)
+                console.log(`   Owner: ${profileOwner.toString()}`)
+                console.log(`   Username: ${parsedProfile.username}`)
+              } else {
+                console.log(`⚠️ Found additional profile for follower: ${pubkey.toString()} (${parsedProfile.username}) - skipping`)
+              }
+            }
           }
         } catch (error) {
           // Silent failure - not a profile account
@@ -1611,41 +2056,125 @@ export function useBlocksProgram() {
         }
       }
 
+      if (!targetProfileAddress) {
+        throw new Error(`Target profile owned by ${targetOwnerKey.toString().slice(0, 8)} not found on blockchain. Make sure this user has created a profile.`)
+      }
+
       if (!followerProfileAddress) {
         throw new Error('You must create a profile before following others')
       }
 
       const instructionData = new FollowProfileInstruction({
-        profile_id: profilePublicKey,
+        profile_id: targetProfileAddress, // MUST be the profile account address, not owner key
       })
 
       const followProfileVariant = Buffer.from([5]) // FollowProfile enum index
       const serializedData = serialize(followProfileSchema, instructionData)
       const fullInstructionData = Buffer.concat([followProfileVariant, Buffer.from(serializedData)])
 
+      console.log(`🔢 Instruction data: variant [5], serialized length: ${serializedData.length}, total: ${fullInstructionData.length} bytes`)
+      console.log(`🔢 Using target profile account address in instruction: ${targetProfileAddress.toString()}`)
+
+      // Debug: verify all pubkeys are proper PublicKey instances and belong to our program
+      console.log('🔍 Verifying transaction keys:')
+      console.log('  publicKey (follower):', publicKey.toString(), 'instanceof PublicKey:', publicKey instanceof PublicKey)
+      console.log('  targetProfileAddress (account):', targetProfileAddress.toString(), 'instanceof PublicKey:', targetProfileAddress instanceof PublicKey)
+      console.log('  followerProfileAddress (account):', followerProfileAddress.toString(), 'instanceof PublicKey:', followerProfileAddress instanceof PublicKey)
+      console.log('  PROGRAM_ID:', PROGRAM_ID.toString())
+
+      // Verify account ownership
+      const targetAccountInfo = await connection.getAccountInfo(targetProfileAddress)
+      const followerAccountInfo = await connection.getAccountInfo(followerProfileAddress)
+      console.log('🔍 Account ownership verification:')
+      console.log('  Target profile owner:', targetAccountInfo?.owner.toString())
+      console.log('  Follower profile owner:', followerAccountInfo?.owner.toString())
+      console.log('  Expected owner (PROGRAM_ID):', PROGRAM_ID.toString())
+      console.log('  Target profile owned by:', targetOwnerKey.toString())
+
+      // Smart contract expects this EXACT account order:
+      // 0. follower_account (signer, writable) - The follower's wallet
+      // 1. followed_profile_account (writable) - The profile account to follow  
+      // 2. follower_profile_account (writable) - The follower's profile account
       const instruction = new TransactionInstruction({
         keys: [
-          { pubkey: publicKey, isSigner: true, isWritable: false }, // Follower account
-          { pubkey: profilePublicKey, isSigner: false, isWritable: true }, // Profile to follow
-          { pubkey: followerProfileAddress, isSigner: false, isWritable: true }, // Follower's profile account
+          { pubkey: publicKey, isSigner: true, isWritable: true }, // follower_account (must be writable per smart contract)
+          { pubkey: targetProfileAddress, isSigner: false, isWritable: true }, // followed_profile_account
+          { pubkey: followerProfileAddress, isSigner: false, isWritable: true }, // follower_profile_account
         ],
         programId: PROGRAM_ID,
         data: fullInstructionData,
       })
 
-      const transaction = new Transaction().add(instruction)
-      const signature = await sendTransaction(transaction, connection)
+      console.log('🔑 Transaction instruction created')
+      console.log('🔑 Keys:', instruction.keys.map(k => ({
+        pubkey: k.pubkey.toString(),
+        isSigner: k.isSigner,
+        isWritable: k.isWritable
+      })))
 
-      await connection.confirmTransaction(signature, 'processed')
+      const transaction = new Transaction().add(instruction)
+      const { blockhash } = await connection.getLatestBlockhash('processed')
+      transaction.recentBlockhash = blockhash
+      transaction.feePayer = publicKey
+
+      // Simulate transaction before sending
+      console.log('🎯 Simulating transaction...')
+      const simulation = await connection.simulateTransaction(transaction)
+      console.log('📊 Simulation result:', simulation)
       
-      // Clear profile cache to force refresh of follower counts
-      clearProfileCache()
+      if (simulation.value.err) {
+        throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`)
+      }
+      console.log('✅ Transaction simulation successful')
+
+      console.log('🚀 Sending transaction...')
+      const signature = await sendTransaction(transaction, connection, {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      })
+
+      console.log(`📋 Transaction sent with signature: ${signature}`)
+
+      console.log('⏳ Confirming transaction...')
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight,
+      }, 'processed')
+
+      console.log('✅ Transaction confirmed! Profile followed successfully!')
+      
+      // Track the follow in localStorage
+      if (publicKey) {
+        addUserFollow(publicKey.toString(), targetOwnerKey.toString())
+      }
+      
+      // Clear profile cache to force refresh of follower counts for both profiles
+      clearProfileCache(publicKey.toString()) // Clear follower's profile cache
+      clearProfileCache(targetOwnerKey.toString()) // Clear target's profile cache
+      clearProfileCache() // Clear all caches to be safe
       
       toast.success('Profile followed!')
       return signature
     } catch (error: any) {
-      console.error('Follow error:', error)
-      toast.error('Failed to follow profile')
+      console.error('❌ Follow error:', error)
+      
+      // More specific error messages
+      if (error.message?.includes('insufficient funds')) {
+        const balance = await checkSOLBalance()
+        toast.error(`Insufficient SOL: ${balance.toFixed(4)} SOL. Need at least 0.01 SOL for fees.`)
+      } else if (error.message?.includes('simulation failed')) {
+        toast.error('Transaction would fail: Check accounts and permissions')
+        console.error('Simulation error details:', error.message)
+      } else if (error.message?.includes('not found on blockchain')) {
+        toast.error('Profile not found: User may not have created a profile yet')
+      } else if (error.message?.includes('Unexpected error')) {
+        toast.error('Wallet transaction failed: Check connection and try again')
+      } else {
+        toast.error(`Failed to follow profile: ${error.message || 'Unknown error'}`)
+      }
+      
       throw error
     }
   }
@@ -1656,6 +2185,17 @@ export function useBlocksProgram() {
 
     try {
       console.log('👥 Unfollowing profile:', profilePublicKey.toString())
+
+      // Ensure profilePublicKey is a proper PublicKey instance
+      let targetProfileKey: PublicKey
+      if (profilePublicKey instanceof PublicKey) {
+        targetProfileKey = profilePublicKey
+      } else if (typeof profilePublicKey === 'string') {
+        targetProfileKey = new PublicKey(profilePublicKey)
+        console.log('🔄 Converted string to PublicKey:', targetProfileKey.toString())
+      } else {
+        throw new Error(`Invalid profilePublicKey type: ${typeof profilePublicKey}`)
+      }
 
       // Find the follower's profile account (current user's profile)
       console.log(`🔍 Searching for follower profile: ${publicKey.toString().slice(0, 8)}...`)
@@ -1683,7 +2223,7 @@ export function useBlocksProgram() {
       }
 
       const instructionData = new FollowProfileInstruction({
-        profile_id: profilePublicKey,
+        profile_id: targetProfileKey,
       })
 
       const unfollowProfileVariant = Buffer.from([6]) // UnfollowProfile enum index
@@ -1693,7 +2233,7 @@ export function useBlocksProgram() {
       const instruction = new TransactionInstruction({
         keys: [
           { pubkey: publicKey, isSigner: true, isWritable: false }, // Follower account
-          { pubkey: profilePublicKey, isSigner: false, isWritable: true }, // Profile to unfollow
+          { pubkey: targetProfileKey, isSigner: false, isWritable: true }, // Profile to unfollow
           { pubkey: followerProfileAddress, isSigner: false, isWritable: true }, // Follower's profile account
         ],
         programId: PROGRAM_ID,
@@ -1705,8 +2245,15 @@ export function useBlocksProgram() {
 
       await connection.confirmTransaction(signature, 'processed')
       
-      // Clear profile cache to force refresh of follower counts
-      clearProfileCache()
+      // Track the unfollow in localStorage
+      if (publicKey) {
+        removeUserFollow(publicKey.toString(), targetProfileKey.toString())
+      }
+      
+      // Clear profile cache to force refresh of follower counts for both profiles
+      clearProfileCache(publicKey.toString()) // Clear follower's profile cache
+      clearProfileCache(targetProfileKey.toString()) // Clear target's profile cache
+      clearProfileCache() // Clear all caches to be safe
       
       toast.success('Profile unfollowed!')
       return signature
@@ -1764,22 +2311,156 @@ export function useBlocksProgram() {
     }
   }
 
-  // Comment on Post - SIMPLIFIED (in-memory only)
+  // Comment on Post - REAL BLOCKCHAIN IMPLEMENTATION
   const commentOnPost = async (postId: number, content: string, postAuthor: PublicKey) => {
     if (!publicKey) throw new Error('Wallet not connected')
 
     try {
       console.log(`💬 Creating comment on post ID ${postId}...`)
       
+      // Check SOL balance
+      const balance = await checkSOLBalance()
+      if (balance < 0.05) {
+        throw new Error(`Insufficient SOL balance: ${balance}. You need at least 0.05 SOL for transaction fees and account creation.`)
+      }
+
       // Get user's profile for the comment
       const userProfile = await getProfile(publicKey)
       if (!userProfile) {
         throw new Error('You must create a profile before commenting')
       }
 
-      // Create comment object
+      // Find the parent post account by scanning all program accounts
+      console.log(`🔍 Searching for post ID ${postId} by author ${postAuthor.toString().slice(0, 8)}...`)
+      
+      const accounts = await connection.getProgramAccounts(PROGRAM_ID)
+      let parentPostAccountAddress: PublicKey | null = null
+      let parentPostAccount: PostAccount | null = null
+      let userProfileAccountAddress: PublicKey | null = null
+      
+      // First pass: find the parent post account
+      for (const { account, pubkey } of accounts) {
+        try {
+          const parsedPost = manualParsePost(account.data)
+          if (parsedPost && 
+              parsedPost.is_initialized === 1 && 
+              Number(parsedPost.id) === postId &&
+              new PublicKey(parsedPost.author).equals(postAuthor)) {
+            parentPostAccountAddress = pubkey
+            parentPostAccount = parsedPost
+            console.log(`🎯 Found parent post ID ${postId} at address: ${pubkey.toString()}`)
+            break
+          }
+        } catch (error) {
+          continue
+        }
+      }
+
+      if (!parentPostAccountAddress || !parentPostAccount) {
+        throw new Error(`Parent post ID ${postId} by author ${postAuthor.toString().slice(0, 8)} not found on blockchain`)
+      }
+
+      // Second pass: find the user's profile account
+      console.log(`🔍 Searching for user's profile: ${publicKey.toString().slice(0, 8)}...`)
+      for (const { account, pubkey } of accounts) {
+        try {
+          const parsedProfile = manualParseProfile(account.data)
+          if (parsedProfile && 
+              parsedProfile.is_initialized === 1 && 
+              new PublicKey(parsedProfile.owner).equals(publicKey)) {
+            userProfileAccountAddress = pubkey
+            console.log(`✅ Found user profile account: ${pubkey.toString()}`)
+            break
+          }
+        } catch (error) {
+          continue
+        }
+      }
+
+      if (!userProfileAccountAddress) {
+        throw new Error(`User's profile not found for ${publicKey.toString().slice(0, 8)}`)
+      }
+
+      // Generate a new keypair for the comment account
+      const commentKeypair = Keypair.generate()
+      console.log(`📍 Comment account: ${commentKeypair.publicKey.toString()}`)
+
+      const instructionData = new CommentOnPostInstruction({
+        content: content,
+        parent_id: BigInt(postId),
+      })
+
+      const commentOnPostVariant = Buffer.from([4]) // CommentOnPost instruction variant
+      const serializedData = serialize(commentOnPostSchema, instructionData)
+      const fullInstructionData = Buffer.concat([commentOnPostVariant, Buffer.from(serializedData)])
+
+      console.log(`🔢 Instruction data: variant [4], serialized length: ${serializedData.length}, total: ${fullInstructionData.length} bytes`)
+
+      const instruction = new TransactionInstruction({
+        keys: [
+          { pubkey: publicKey, isSigner: true, isWritable: true }, // User account (commenter)
+          { pubkey: commentKeypair.publicKey, isSigner: true, isWritable: true }, // Comment account (to be created)
+          { pubkey: parentPostAccountAddress, isSigner: false, isWritable: true }, // Parent post account (to update comment count)
+          { pubkey: userProfileAccountAddress, isSigner: false, isWritable: true }, // User profile account (to update post count)
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // System program
+        ],
+        programId: PROGRAM_ID,
+        data: fullInstructionData,
+      })
+
+      console.log('🔑 Transaction accounts:')
+      console.log(`  User (commenter): ${publicKey.toString()} (signer, writable)`)
+      console.log(`  Comment: ${commentKeypair.publicKey.toString()} (signer, writable)`)
+      console.log(`  Parent Post: ${parentPostAccountAddress.toString()} (not signer, writable)`)
+      console.log(`  User Profile: ${userProfileAccountAddress.toString()} (not signer, writable)`)
+      console.log(`  System Program: ${SystemProgram.programId.toString()}`)
+
+      const transaction = new Transaction().add(instruction)
+      const { blockhash } = await connection.getLatestBlockhash('processed')
+      transaction.recentBlockhash = blockhash
+      transaction.feePayer = publicKey
+
+      // The comment account must sign the transaction
+      transaction.partialSign(commentKeypair)
+
+      // Simulate transaction before sending
+      console.log('🎯 Simulating transaction...')
+      const simulation = await connection.simulateTransaction(transaction)
+      console.log('📊 Simulation result:', simulation)
+      
+      if (simulation.value.err) {
+        throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`)
+      }
+      console.log('✅ Transaction simulation successful')
+
+      console.log('🚀 Sending transaction...')
+      const signature = await sendTransaction(transaction, connection, {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+        signers: [commentKeypair], // Comment keypair must sign the transaction
+      })
+
+      console.log(`📋 Transaction sent with signature: ${signature}`)
+      
+      console.log('⏳ Confirming transaction...')
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight,
+      }, 'processed')
+
+      console.log('✅ Transaction confirmed! Comment created successfully!')
+      
+      // Track this comment account so we can distinguish it from regular posts
+      trackCommentAccount(commentKeypair.publicKey.toString(), postId)
+      
+      // Clear posts cache to force refresh
+      postsCache = null
+      
+      // Also store comment locally for immediate display
       const comment: Comment = {
-        id: Date.now(), // Use timestamp as unique ID
+        id: Date.now(),
         parentPostId: postId,
         author: publicKey,
         content: content,
@@ -1787,17 +2468,27 @@ export function useBlocksProgram() {
         likes: 0,
         authorProfile: userProfile
       }
-
-      // Store comment in memory
-      storeComment(postId, comment)
-
-      console.log('✅ Comment created successfully!')
-      toast.success('Comment posted!')
       
-      return 'comment_created'
+      storeComment(postId, comment)
+      
+      toast.success('Comment posted!')
+      return signature
     } catch (error: any) {
       console.error('❌ Comment creation error:', error)
-      toast.error(`Failed to comment: ${error.message || 'Unknown error'}`)
+      
+      // More specific error messages
+      if (error.message?.includes('insufficient funds')) {
+        const balance = await checkSOLBalance()
+        toast.error(`Insufficient SOL: ${balance.toFixed(4)} SOL. Need at least 0.05 SOL for fees and account creation.`)
+      } else if (error.message?.includes('simulation failed')) {
+        toast.error('Transaction would fail: Check post exists and wallet has permission')
+        console.error('Simulation error details:', error.message)
+      } else if (error.message?.includes('not found on blockchain')) {
+        toast.error('Post not found on blockchain')
+      } else {
+        toast.error(`Failed to comment: ${error.message || 'Unknown error'}`)
+      }
+      
       throw error
     }
   }
@@ -1872,12 +2563,92 @@ export function useBlocksProgram() {
     postsCache = null
     // Clear comments storage
     commentsStorage = {}
+    // Clear comment tracking data
+    try {
+      localStorage.removeItem(getCommentAccountsKey())
+      localStorage.removeItem(getCommentMappingKey())
+      console.log('🗑️ Cleared comment tracking data')
+    } catch (error) {
+      console.error('Failed to clear comment tracking data:', error)
+    }
+  }
+
+  // Force refresh a specific user's profile (useful after follow/unfollow)
+  const refreshUserProfile = async (userPublicKey: PublicKey) => {
+    console.log(`🔄 Force refreshing profile for: ${userPublicKey.toString().slice(0, 8)}`)
+    
+    // Clear all caches for this user
+    clearProfileCache(userPublicKey.toString())
+    
+    // Force fetch fresh data from blockchain
+    try {
+      const freshProfile = await getProfile(userPublicKey)
+      console.log(`✅ Refreshed profile for ${userPublicKey.toString().slice(0, 8)}:`, {
+        username: freshProfile?.username,
+        followersCount: freshProfile?.followersCount,
+        followingCount: freshProfile?.followingCount
+      })
+      return freshProfile
+    } catch (error) {
+      console.error('Failed to refresh user profile:', error)
+      return null
+    }
+  }
+
+  // Check if user is following another user - hybrid approach
+  const isFollowingUser = async (followerPublicKey: PublicKey, targetPublicKey: PublicKey): Promise<boolean> => {
+    try {
+      console.log(`🔍 Checking follow state: ${followerPublicKey.toString().slice(0, 8)} -> ${targetPublicKey.toString().slice(0, 8)}`)
+      
+      // First check localStorage for immediate feedback
+      const localStorageKey = `user_follows_${followerPublicKey.toString()}`
+      const storedFollows = localStorage.getItem(localStorageKey)
+      const followsList = storedFollows ? JSON.parse(storedFollows) : []
+      const isFollowingInLocalStorage = followsList.includes(targetPublicKey.toString())
+      
+      console.log(`📱 localStorage check: ${isFollowingInLocalStorage}`)
+      
+      // Get both profiles to check follow counts
+      const [followerProfile, targetProfile] = await Promise.all([
+        getProfile(followerPublicKey),
+        getProfile(targetPublicKey)
+      ])
+      
+      if (!followerProfile || !targetProfile) {
+        console.log(`❌ One or both profiles not found`)
+        return false
+      }
+      
+      console.log(`📊 Follower "${followerProfile.username}" following: ${followerProfile.followingCount}`)
+      console.log(`📊 Target "${targetProfile.username}" followers: ${targetProfile.followersCount}`)
+      
+      // If localStorage says following and both have non-zero counts, likely following
+      if (isFollowingInLocalStorage && followerProfile.followingCount > 0 && targetProfile.followersCount > 0) {
+        console.log(`✅ Confirmed following via localStorage + blockchain counts`)
+        return true
+      }
+      
+      // If localStorage says not following, trust that
+      if (!isFollowingInLocalStorage) {
+        console.log(`❌ Not following according to localStorage`)
+        return false
+      }
+      
+      // Fallback: if localStorage is inconsistent, default to false to prevent double follows
+      console.log(`⚠️ Inconsistent state, defaulting to not following`)
+      return false
+      
+    } catch (error) {
+      console.error('Error checking follow state:', error)
+      return false
+    }
   }
 
   return {
     createProfile,
     createPost,
     likePost,
+    unlikePost,
     getProfile,
     getProfileByUsername,
     getPosts,
@@ -1887,6 +2658,7 @@ export function useBlocksProgram() {
     preloadProfile,
     clearProfileCache,
     refreshData,
+    refreshUserProfile,
     createCommunity,
     followProfile,
     unfollowProfile,
@@ -1896,5 +2668,12 @@ export function useBlocksProgram() {
     getUserBookmarks,
     isPostBookmarked,
     getCommentsForPost,
+    hasUserLikedPost: (postId: number) => publicKey ? hasUserLikedPost(publicKey.toString(), postId) : false,
+    getUserLikedPosts: () => publicKey ? getUserLikedPosts(publicKey.toString()) : [],
+    getUserFollowedProfiles: () => publicKey ? getUserFollowedProfiles(publicKey.toString()) : [],
+    addUserFollow: (profileOwnerKey: string) => publicKey ? addUserFollow(publicKey.toString(), profileOwnerKey) : null,
+    removeUserFollow: (profileOwnerKey: string) => publicKey ? removeUserFollow(publicKey.toString(), profileOwnerKey) : null,
+    isUserFollowingProfile: (profileOwnerKey: string) => publicKey ? isUserFollowingProfile(publicKey.toString(), profileOwnerKey) : false,
+    isFollowingUser: (followerPublicKey: PublicKey, targetPublicKey: PublicKey) => publicKey ? isFollowingUser(followerPublicKey, targetPublicKey) : false,
   }
 }

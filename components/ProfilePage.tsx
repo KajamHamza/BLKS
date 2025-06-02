@@ -12,16 +12,47 @@ interface ProfilePageProps {
 }
 
 export default function ProfilePage({ profileAddress, isOwnProfile = false }: ProfilePageProps) {
-  const { getProfile, getPosts, followProfile, unfollowProfile } = useBlocksProgram()
+  const { 
+    getProfile, 
+    getPosts, 
+    followProfile, 
+    unfollowProfile, 
+    isFollowingUser,
+    refreshUserProfile 
+  } = useBlocksProgram()
   const { publicKey } = useWallet()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
   const [loading, setLoading] = useState(true)
   const [following, setFollowing] = useState(false)
+  const [followLoading, setFollowLoading] = useState(false)
+  const [followStateLoading, setFollowStateLoading] = useState(false)
 
   useEffect(() => {
     loadProfile()
   }, [profileAddress])
+
+  useEffect(() => {
+    // Check follow state from blockchain when profile loads
+    const checkFollowState = async () => {
+      if (profile && publicKey) {
+        setFollowStateLoading(true)
+        try {
+          console.log(`🔍 Checking follow state for ${profile.username}...`)
+          const isFollowing = await isFollowingUser(publicKey, profile.owner)
+          setFollowing(isFollowing)
+          console.log(`📊 Follow state result: ${isFollowing}`)
+        } catch (error) {
+          console.error('Failed to check follow state:', error)
+          setFollowing(false)
+        } finally {
+          setFollowStateLoading(false)
+        }
+      }
+    }
+    
+    checkFollowState()
+  }, [profile, publicKey, isFollowingUser])
 
   const loadProfile = async () => {
     try {
@@ -45,20 +76,57 @@ export default function ProfilePage({ profileAddress, isOwnProfile = false }: Pr
   }
 
   const handleFollow = async () => {
-    if (!publicKey || !profile) return
+    if (!publicKey || !profile || followLoading) return
     
     try {
-      if (following) {
+      setFollowLoading(true)
+      
+      const currentUserKey = publicKey.toString()
+      const profileOwnerKey = profile.owner.toString()
+      
+      console.log(`🔄 Follow operation:`)
+      console.log(`  Current user: ${currentUserKey.slice(0, 8)}`)
+      console.log(`  Target profile owner: ${profileOwnerKey.slice(0, 8)}`)
+      console.log(`  Target username: ${profile.username}`)
+      console.log(`  Current follow state: ${following}`)
+      
+      // Double-check current follow state before proceeding
+      const currentFollowState = await isFollowingUser(publicKey, profile.owner)
+      console.log(`🔍 Double-checking follow state: ${currentFollowState}`)
+      
+      if (following || currentFollowState) {
+        console.log(`👥 Unfollowing ${profile.username}...`)
         await unfollowProfile(profile.owner)
         setFollowing(false)
+        console.log(`✅ Unfollow completed`)
       } else {
+        console.log(`👥 Following ${profile.username}...`)
         await followProfile(profile.owner)
         setFollowing(true)
+        console.log(`✅ Follow completed`)
       }
-      // Refresh profile to get updated follower count
+      
+      // Force refresh both profiles to get updated follower counts
+      console.log('🔄 Refreshing profiles after follow/unfollow...')
+      await refreshUserProfile(profile.owner) // Refresh target profile
+      if (publicKey) {
+        await refreshUserProfile(publicKey) // Refresh current user's profile
+      }
+      
+      // Reload the profile data to show updated counts
       await loadProfile()
+      
+      // Re-check follow state after operation
+      const newFollowState = await isFollowingUser(publicKey, profile.owner)
+      setFollowing(newFollowState)
+      console.log(`📊 Final follow state: ${newFollowState}`)
+      
     } catch (error) {
       console.error('Follow/unfollow error:', error)
+      // Revert the follow state on error
+      setFollowing(!following)
+    } finally {
+      setFollowLoading(false)
     }
   }
 
@@ -184,13 +252,26 @@ export default function ProfilePage({ profileAddress, isOwnProfile = false }: Pr
             <div className="mt-4">
               <button
                 onClick={handleFollow}
-                className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                disabled={followLoading || followStateLoading}
+                className={`px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   following 
-                    ? 'bg-gray-200 text-gray-800 hover:bg-gray-300' 
+                    ? 'bg-red-600 text-white hover:bg-red-700' 
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                {following ? 'Following' : 'Follow'}
+                {followStateLoading ? (
+                  <span className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>Checking...</span>
+                  </span>
+                ) : followLoading ? (
+                  <span className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>{following ? 'Unfollowing...' : 'Following...'}</span>
+                  </span>
+                ) : (
+                  following ? 'Unfollow' : 'Follow'
+                )}
               </button>
             </div>
           )}

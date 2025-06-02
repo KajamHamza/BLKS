@@ -24,13 +24,15 @@ export default function Feed({ connected, userProfile, onProfileClick }: FeedPro
   const { 
     getPosts, 
     likePost, 
+    unlikePost,
     getProfile, 
     commentOnPost, 
     bookmarkPost, 
     getUserBookmarks, 
     isPostBookmarked,
     refreshData,
-    getCommentsForPost
+    getCommentsForPost,
+    hasUserLikedPost
   } = useBlocksProgram()
   const { connection } = useConnection()
   const { publicKey, sendTransaction } = useWallet()
@@ -138,13 +140,23 @@ export default function Feed({ connected, userProfile, onProfileClick }: FeedPro
     }
     
     try {
-      await likePost(postId, postAuthor)
+      const userHasLiked = hasUserLikedPost(postId)
+      
+      if (userHasLiked) {
+        // User has already liked, so unlike
+        await unlikePost(postId, postAuthor)
+        toast.success('Post unliked! 👎')
+      } else {
+        // User hasn't liked, so like
+        await likePost(postId, postAuthor)
+        toast.success('Post liked! 👍')
+      }
+      
       // Refresh posts to show updated like count immediately
       await fetchPosts()
-      toast.success('Post liked! 👍')
     } catch (error) {
-      console.error('Failed to like post:', error)
-      toast.error('Failed to like post')
+      console.error('Failed to toggle like:', error)
+      toast.error('Failed to update like')
     }
   }
 
@@ -586,12 +598,15 @@ export default function Feed({ connected, userProfile, onProfileClick }: FeedPro
                   disabled={!connected}
                   className={`flex items-center space-x-2 transition-colors ${
                     connected 
-                      ? 'text-gray-500 hover:text-red-500' 
+                      ? hasUserLikedPost(post.id)
+                        ? 'text-red-500 hover:text-red-600' 
+                        : 'text-gray-500 hover:text-red-500'
                       : 'text-gray-300 cursor-not-allowed'
                   }`}
-                  title={!connected ? 'Connect wallet to like' : 'Like this post'}
+                  title={!connected ? 'Connect wallet to like' : 
+                         hasUserLikedPost(post.id) ? 'Unlike this post' : 'Like this post'}
                 >
-                  <Heart className="h-5 w-5" />
+                  <Heart className={`h-5 w-5 ${hasUserLikedPost(post.id) ? 'fill-current' : ''}`} />
                   <span className="text-sm font-medium">{post.likes}</span>
                 </button>
                 <button 
